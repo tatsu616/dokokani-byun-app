@@ -105,16 +105,19 @@
       </div>
     </section>
 
-    <!-- 4駅ガチャ期待値シミュレーター -->
+    <!-- 4駅ガチャ期待値シミュレーター＆北日本・東日本マップ -->
     <section class="simulator-section" id="simulator-section" aria-label="4駅ガチャ期待値シミュレーター">
       <div class="sim-header">
         <div class="sim-title-wrap">
-          <h2 class="sim-title">🎯 4駅ガチャ期待値シミュレーター（申し込み判定）</h2>
+          <h2 class="sim-title">🎯 4駅ガチャ期待値シミュレーター ＆ 行き先マップ</h2>
           <span class="sim-badge" id="sim-count-badge">0 / 4 駅選択中</span>
         </div>
         <div class="sim-actions">
           <button type="button" class="btn-action btn-gacha" id="btn-random-gacha">
             🎲 ランダムに4駅ガチャを引く
+          </button>
+          <button type="button" class="btn-action btn-final-draw" id="btn-final-draw" style="display: none;">
+            🎯 この4駅から1駅を抽選！
           </button>
           <button type="button" class="btn-action btn-clear" id="btn-clear-sim">
             クリア
@@ -122,12 +125,36 @@
         </div>
       </div>
 
-      <div class="sim-slots" id="sim-slots">
-        <!-- JSで4スロット描画 -->
-      </div>
+      <div class="sim-body-grid">
+        <div class="sim-left-col">
+          <div class="sim-slots" id="sim-slots" style="margin-bottom: 0;">
+            <!-- JSで4スロット描画 -->
+          </div>
+          <div id="sim-winner-area"></div>
+          <div id="sim-result-area">
+            <!-- JSで期待値・判定結果描画 -->
+          </div>
+        </div>
 
-      <div id="sim-result-area">
-        <!-- JSで期待値・判定結果描画 -->
+        <!-- 北日本・東日本（東北・甲信越・関東）地理マップ -->
+        <div class="sim-map-card">
+          <div class="sim-map-header">
+            <div class="sim-map-title">
+              🗾 北日本・東日本 行き先候補マップ
+              <span style="font-size: 0.72rem; font-weight: 500; color: var(--text-muted);">（地図上の駅クリックでも選択可）</span>
+            </div>
+          </div>
+          <div class="geo-svg-wrap" id="sim-geo-map-container">
+            <!-- JSでSVG日本地図＆色分け新幹線路線図を描画 -->
+          </div>
+          <div class="sim-map-legend">
+            <span class="legend-line-item"><span class="legend-line-bar" style="background: #00894b;"></span>東北新幹線</span>
+            <span class="legend-line-item"><span class="legend-line-bar" style="background: #d81b60;"></span>秋田新幹線</span>
+            <span class="legend-line-item"><span class="legend-line-bar" style="background: #ef6c00;"></span>山形新幹線</span>
+            <span class="legend-line-item"><span class="legend-line-bar" style="background: #e53935;"></span>上越新幹線</span>
+            <span class="legend-line-item"><span class="legend-line-bar" style="background: #1e88e5;"></span>北陸新幹線</span>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -147,6 +174,7 @@
 
   </main>
 
+  <script src="map-data.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

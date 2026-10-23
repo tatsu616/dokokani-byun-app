@@ -100,8 +100,66 @@ const state = {
   lineFilter: "all",
   searchQuery: "",
   sortBy: "route",  // "route", "fare-desc", "fare-asc", "km-desc", "time-asc"
-  selectedIds: []   // 最大4駅
+  selectedIds: [],  // 最大4駅
+  winnerId: null,   // 4駅から1駅抽選された決定駅ID
+  showAllMapLabels: false
 };
+
+// 新幹線路線ごとの駅IDチェイン（地理座標接続用）
+const ROUTE_CHAINS = {
+  "東北新幹線": [
+    "tokyo", "omiya", "nasushiobara", "shinshirakawa", "koriyama", "fukushima",
+    "shiroishizao", "sendai", "furukawa", "kurikomakogen", "ichinoseki",
+    "mizusawaesashi", "kitakami", "shinhanamaki", "morioka", "iwatenumakunai",
+    "ninohe", "hachinohe", "shichinohetowada", "shinaomori"
+  ],
+  "秋田新幹線": [
+    "morioka", "shizukuishi", "tazawako", "kakunodate", "omagari", "akita"
+  ],
+  "山形新幹線": [
+    "fukushima", "yonezawa", "takahata", "akayu", "kaminoyamaonsen",
+    "yamagata", "tendo", "sakuranbohigashine", "murayama", "oishida", "shinjo"
+  ],
+  "上越新幹線": [
+    "tokyo", "omiya", "takasaki", "jomokogen", "echigoyuzawa", "galayuzawa",
+    "urasa", "nagaoka", "tsubamesanjo", "niigata"
+  ],
+  "北陸新幹線": [
+    "takasaki", "annakaharuna", "karuizawa", "sakudaira", "ueda",
+    "nagano", "iiyama", "joetsumyoko"
+  ]
+};
+
+// 東京駅から指定駅までの地理的ルート座標列を取得
+function getRoutePathFromTokyo(station) {
+  const line = station.line;
+  let ids = [];
+  if (line === "東北新幹線") {
+    const ch = ROUTE_CHAINS["東北新幹線"];
+    ids = ch.slice(0, ch.indexOf(station.id) + 1);
+  } else if (line === "秋田新幹線") {
+    const tCh = ROUTE_CHAINS["東北新幹線"];
+    const aCh = ROUTE_CHAINS["秋田新幹線"];
+    ids = tCh.slice(0, tCh.indexOf("morioka")).concat(aCh.slice(0, aCh.indexOf(station.id) + 1));
+  } else if (line === "山形新幹線") {
+    const tCh = ROUTE_CHAINS["東北新幹線"];
+    const yCh = ROUTE_CHAINS["山形新幹線"];
+    ids = tCh.slice(0, tCh.indexOf("fukushima")).concat(yCh.slice(0, yCh.indexOf(station.id) + 1));
+  } else if (line === "上越新幹線") {
+    const jCh = ROUTE_CHAINS["上越新幹線"];
+    ids = jCh.slice(0, jCh.indexOf(station.id) + 1);
+  } else if (line === "北陸新幹線") {
+    const hCh = ROUTE_CHAINS["北陸新幹線"];
+    ids = ["tokyo", "omiya"].concat(hCh.slice(0, hCh.indexOf(station.id) + 1));
+  }
+  return ids.map(id => STATION_GEO[id]).filter(Boolean);
+}
+
+// 座標配列をSVGパス文字列に変換
+function pointsToSvgPath(pts) {
+  if (!pts || pts.length === 0) return "";
+  return pts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x},${p.y}`).join(" ");
+}
 
 const PLAN_CONFIG = {
   standard: {
@@ -242,11 +300,11 @@ function toggleSelectStation(id) {
     state.selectedIds.splice(idx, 1);
   } else {
     if (state.selectedIds.length >= 4) {
-      // 既に4駅ある場合は先頭を入れ替えるか通知
       state.selectedIds.shift();
     }
     state.selectedIds.push(id);
   }
+  state.winnerId = null;
   renderAll();
 }
 
@@ -259,13 +317,205 @@ function drawRandomGacha() {
     picked.push(pool.splice(r, 1)[0].id);
   }
   state.selectedIds = picked;
+  state.winnerId = null;
+  renderAll();
+}
+
+// 4駅から1駅を最終抽選する
+function drawFinalWinner() {
+  if (state.selectedIds.length === 0) return;
+  const r = Math.floor(Math.random() * state.selectedIds.length);
+  state.winnerId = state.selectedIds[r];
   renderAll();
 }
 
 // 4駅クリア
 function clearSimulator() {
   state.selectedIds = [];
+  state.winnerId = null;
   renderAll();
+}
+
+// 北日本・東日本（東北・甲信越・関東）SVG地理マップ＋色分け新幹線路線図を生成
+function buildGeoMapSvg({ isLarge = false, showAllNames = false } = {}) {
+  const selectedStations = state.selectedIds
+    .map(id => STATIONS.find(s => s.id === id))
+    .filter(Boolean)
+    .map(s => computeStationMetrics(s, state.plan));
+
+  const activePrefNames = new Set(selectedStations.map(s => s.pref));
+  const hasSelection = selectedStations.length > 0;
+
+  // 1. 都道府県ポリゴン＆県名ラベル
+  const prefsPolys = JAPAN_MAP_PREFS.map(p => {
+    const isSelectedPref = activePrefNames.has(p.name);
+    const cls = [
+      "pref-land",
+      p.isTarget ? "target-pref" : "",
+      isSelectedPref ? "active-pref" : ""
+    ].filter(Boolean).join(" ");
+    return `<path d="${p.d}" class="${cls}" />`;
+  }).join("");
+
+  const prefsLabels = JAPAN_MAP_PREFS.map(p => {
+    const shortName = p.name.replace(/[都県]$/, "");
+    return `<text x="${p.lx}" y="${p.ly}" class="pref-label ${p.isTarget ? "target-label" : ""}">${shortName}</text>`;
+  }).join("");
+
+  // 2. 5つの新幹線路線（白縁＋路線カラー）
+  const linesOrder = ["東北新幹線", "上越新幹線", "北陸新幹線", "山形新幹線", "秋田新幹線"];
+  const routeBgPaths = linesOrder.map(lineName => {
+    const pts = ROUTE_CHAINS[lineName].map(id => STATION_GEO[id]).filter(Boolean);
+    return `<path d="${pointsToSvgPath(pts)}" class="shinkansen-route-bg" />`;
+  }).join("");
+
+  const routeColorPaths = linesOrder.map(lineName => {
+    const pts = ROUTE_CHAINS[lineName].map(id => STATION_GEO[id]).filter(Boolean);
+    const color = LINE_META[lineName].color;
+    const isLineSelected = selectedStations.some(s => s.line === lineName);
+    const dimClass = hasSelection && !isLineSelected ? "dimmed" : "";
+    return `<path d="${pointsToSvgPath(pts)}" class="shinkansen-route ${dimClass}" stroke="${color}" />`;
+  }).join("");
+
+  // 3. 選択された4駅への東京駅からのハイライトルート（アニメーション破線）
+  const activeRoutePaths = selectedStations.map(st => {
+    const pts = getRoutePathFromTokyo(st);
+    const color = state.winnerId === st.id ? "#f59e0b" : LINE_META[st.line].color;
+    return `<path d="${pointsToSvgPath(pts)}" class="shinkansen-route-highlight" stroke="${color}" />`;
+  }).join("");
+
+  // 4. 全47駅のドット＆常時表示の主要駅ラベル
+  const majorLandmarks = new Set(["shinaomori", "akita", "morioka", "sendai", "shinjo", "yamagata", "niigata", "nagano", "joetsumyoko", "karuizawa"]);
+  const allMetrics = STATIONS.map(s => computeStationMetrics(s, state.plan));
+
+  const stationDots = allMetrics.map(st => {
+    const geo = STATION_GEO[st.id];
+    if (!geo) return "";
+    const color = LINE_META[st.line].color;
+    const isSel = state.selectedIds.includes(st.id);
+    const r = isSel ? 6.5 : 4.2;
+    const showName = showAllNames || (!hasSelection && majorLandmarks.has(st.id));
+
+    // 主要駅ラベルの向き調整
+    let dx = 7, dy = 3, anchor = "start";
+    if (["akita", "niigata", "joetsumyoko", "nagano", "shinjo", "yamagata"].includes(st.id)) {
+      dx = -7;
+      anchor = "end";
+    }
+
+    return `
+      <g onclick="toggleSelectStation('${st.id}')" style="cursor:pointer;">
+        <title>${st.name}駅（${st.line}・${st.pref}）&#10;往復指定席：${fmtYen(st.activeRoundTrip)}（${st.discountRate.toFixed(1)}%OFF）&#10;クリックで4駅候補に追加/解除</title>
+        <circle cx="${geo.x}" cy="${geo.y}" r="${r}" fill="#ffffff" stroke="${color}" stroke-width="${isSel ? 3 : 2.2}" class="map-st-dot" />
+        ${showName && !isSel ? `
+          <text x="${geo.x + dx}" y="${geo.y + dy}" text-anchor="${anchor}" font-size="10.5" font-weight="800" fill="#1e293b" stroke="#ffffff" stroke-width="3" paint-order="stroke">${st.name}</text>
+        ` : ""}
+      </g>
+    `;
+  }).join("");
+
+  // 5. 出発地：東京駅マーカー（＋大宮・高崎ジャンクション小ドット）
+  const tokyoGeo = STATION_GEO["tokyo"];
+  const omiyaGeo = STATION_GEO["omiya"];
+  const takasakiGeo = STATION_GEO["takasaki"];
+  const originMarker = `
+    <circle cx="${omiyaGeo.x}" cy="${omiyaGeo.y}" r="3" fill="#64748b" />
+    <circle cx="${takasakiGeo.x}" cy="${takasakiGeo.y}" r="3" fill="#64748b" />
+    <g>
+      <circle cx="${tokyoGeo.x}" cy="${tokyoGeo.y}" r="9" fill="#182232" stroke="#ffffff" stroke-width="2.5" />
+      <circle cx="${tokyoGeo.x}" cy="${tokyoGeo.y}" r="3.5" fill="#facc15" />
+      <rect x="${tokyoGeo.x + 11}" y="${tokyoGeo.y - 10}" width="64" height="20" rx="5" fill="#182232" />
+      <text x="${tokyoGeo.x + 43}" y="${tokyoGeo.y + 4}" text-anchor="middle" font-size="10.5" font-weight="800" fill="#ffffff">🚄 東京発</text>
+    </g>
+  `;
+
+  // 6. 選択された候補駅（最大4駅）の強調ピン＆スマート吹き出しラベル（重なり防止付き）
+  const calloutBoxes = [];
+  const selectedOverlays = selectedStations.map((st, idx) => {
+    const geo = STATION_GEO[st.id];
+    if (!geo) return "";
+    const color = LINE_META[st.line].color;
+    const isWinner = state.winnerId === st.id;
+    const badgeColor = isWinner ? "#d97706" : color;
+    const numStr = idx + 1;
+
+    // 吹き出しを左右どちらに出すか（日本海側・内陸西側は左、太平洋側・東北本線側は右）
+    const placeLeft = ["秋田新幹線", "上越新幹線", "北陸新幹線", "山形新幹線"].includes(st.line) && geo.x < 330;
+    const boxW = isWinner ? 158 : 144;
+    const boxH = 38;
+    let bx = placeLeft ? Math.max(8, geo.x - boxW - 18) : Math.min(640 - boxW - 8, geo.x + 18);
+    let by = Math.max(12, Math.min(820 - boxH - 12, geo.y - boxH / 2));
+
+    // 既存の吹き出しとの上下重なりを回避
+    for (let iter = 0; iter < 8; iter++) {
+      let collided = false;
+      for (const prev of calloutBoxes) {
+        const horizOverlap = Math.abs(bx - prev.bx) < boxW - 10;
+        const vertOverlap = Math.abs(by - prev.by) < boxH + 6;
+        if (horizOverlap && vertOverlap) {
+          by = by >= prev.by ? prev.by + boxH + 7 : prev.by - boxH - 7;
+          by = Math.max(10, Math.min(820 - boxH - 10, by));
+          collided = true;
+        }
+      }
+      if (!collided) break;
+    }
+    calloutBoxes.push({ bx, by });
+
+    const anchorX = placeLeft ? bx + boxW : bx;
+    const anchorY = by + boxH / 2;
+
+    return `
+      <g onclick="toggleSelectStation('${st.id}')" style="cursor:pointer;">
+        <!-- パルスリング -->
+        <circle cx="${geo.x}" cy="${geo.y}" r="${isWinner ? 15 : 12}" stroke="${badgeColor}" class="pulse-ring" />
+        <!-- 引き出し線 -->
+        <line x1="${geo.x}" y1="${geo.y}" x2="${anchorX}" y2="${anchorY}" stroke="${badgeColor}" stroke-width="2" stroke-dasharray="3 2" />
+        <!-- 駅上の番号ピン -->
+        <circle cx="${geo.x}" cy="${geo.y}" r="${isWinner ? 11 : 9.5}" fill="${badgeColor}" stroke="#ffffff" stroke-width="2.2" />
+        <text x="${geo.x}" y="${geo.y + 3.8}" text-anchor="middle" font-size="11" font-weight="900" fill="#ffffff">${isWinner ? "★" : numStr}</text>
+
+        <!-- 吹き出しカード -->
+        <g transform="translate(${bx}, ${by})">
+          <rect x="0" y="0" width="${boxW}" height="${boxH}" rx="7" fill="${isWinner ? "#fffbeb" : "#ffffff"}" stroke="${badgeColor}" stroke-width="${isWinner ? 2.8 : 2}" filter="drop-shadow(0 3px 6px rgba(15,23,42,0.16))" />
+          <rect x="0" y="0" width="22" height="${boxH}" rx="6" fill="${badgeColor}" />
+          <text x="11" y="${boxH / 2 + 4}" text-anchor="middle" font-size="11.5" font-weight="900" fill="#ffffff">${isWinner ? "当" : numStr}</text>
+          <text x="28" y="15" font-size="12" font-weight="900" fill="#182232">${st.name}${isWinner ? " 🏆" : ""}</text>
+          <text x="28" y="30" font-size="10.2" font-weight="700" fill="#059669">往復${fmtYen(st.activeRoundTrip)} (${st.discountRate.toFixed(0)}%OFF)</text>
+        </g>
+      </g>
+    `;
+  }).join("");
+
+  // 海・方位・タイトル装飾
+  return `
+    <svg viewBox="0 0 640 820" class="geo-svg ${isLarge ? "large-map" : ""}" role="img" aria-label="北日本・東日本 新幹線路線図と行き先候補マップ">
+      <!-- 海域ラベル -->
+      <text x="105" y="290" font-size="13" font-weight="800" fill="#93c5fd" letter-spacing="0.2em">日本海</text>
+      <text x="545" y="520" font-size="13" font-weight="800" fill="#93c5fd" letter-spacing="0.2em">太平洋</text>
+
+      <!-- 都道府県ポリゴン -->
+      <g>${prefsPolys}</g>
+      <!-- 県名ラベル -->
+      <g>${prefsLabels}</g>
+
+      <!-- 新幹線5路線（白縁＋路線カラー） -->
+      <g>${routeBgPaths}</g>
+      <g>${routeColorPaths}</g>
+
+      <!-- 選択中の駅へのアクティブ経路 -->
+      <g>${activeRoutePaths}</g>
+
+      <!-- 全47駅ドット -->
+      <g>${stationDots}</g>
+
+      <!-- 東京駅（出発地） -->
+      ${originMarker}
+
+      <!-- 選択された4駅の強調ピン＆吹き出し -->
+      <g>${selectedOverlays}</g>
+    </svg>
+  `;
 }
 
 // ヘッダー統計の更新
@@ -297,12 +547,15 @@ function renderHeaderStats() {
   `;
 }
 
-// 4駅ガチャ期待値シミュレーターの描画
+// 4駅ガチャ期待値シミュレーター＋日本地図の描画
 function renderSimulator() {
   const simSec = document.getElementById("simulator-section");
   const slotsContainer = document.getElementById("sim-slots");
+  const winnerContainer = document.getElementById("sim-winner-area");
   const resultContainer = document.getElementById("sim-result-area");
   const countBadge = document.getElementById("sim-count-badge");
+  const finalDrawBtn = document.getElementById("btn-final-draw");
+  const mapContainer = document.getElementById("sim-geo-map-container");
 
   const selectedStations = state.selectedIds
     .map(id => STATIONS.find(s => s.id === id))
@@ -311,6 +564,10 @@ function renderSimulator() {
 
   simSec.classList.toggle("has-selection", selectedStations.length > 0);
   countBadge.textContent = `${selectedStations.length} / 4 駅選択中`;
+  finalDrawBtn.style.display = selectedStations.length >= 2 ? "inline-flex" : "none";
+
+  // 日本地図（北日本・東日本）のSVG描画
+  mapContainer.innerHTML = buildGeoMapSvg({ isLarge: false, showAllNames: false });
 
   // 4つのスロット描画
   let slotsHtml = "";
@@ -318,14 +575,23 @@ function renderSimulator() {
     const st = selectedStations[i];
     if (st) {
       const lineColor = LINE_META[st.line].color;
+      const isWinner = state.winnerId === st.id;
       slotsHtml += `
-        <div class="sim-slot filled" style="border-color: ${lineColor};">
+        <div class="sim-slot filled ${isWinner ? "winner-slot" : ""}" style="border-color: ${isWinner ? "#d97706" : lineColor};">
           <button class="sim-slot-remove" onclick="toggleSelectStation('${st.id}')" title="候補から外す">✕</button>
-          <div style="font-size: 0.72rem; font-weight: 700; color: ${lineColor};">${st.line}（${st.pref}）</div>
-          <div style="font-size: 1.08rem; font-weight: 800; margin: 2px 0;">${st.name}駅</div>
+          <div style="font-size: 0.72rem; font-weight: 700; color: ${lineColor}; display:flex; align-items:center;">
+            <span class="slot-num-badge" style="background:${isWinner ? "#d97706" : lineColor};">${i + 1}</span>
+            ${st.line}（${st.pref}）
+          </div>
+          <div style="font-size: 1.08rem; font-weight: 800; margin: 3px 0 2px;">
+            ${st.name}駅 ${isWinner ? "🏆" : ""}
+          </div>
           <div style="font-size: 0.82rem; font-weight: 700; color: var(--text-sub);">
             往復 ${fmtYen(st.activeRoundTrip)}
             <span style="color: #059669; margin-left: 4px;">(-${fmtYen(st.savings)})</span>
+          </div>
+          <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 2px;">
+            🚄 ${st.km}km / 最速 ${fmtMins(st.mins)}
           </div>
         </div>
       `;
@@ -334,7 +600,7 @@ function renderSimulator() {
         <div class="sim-slot">
           <div class="sim-slot-empty">
             候補駅 ${i + 1}<br>
-            <span style="font-size: 0.72rem; font-weight: 400;">下のカードをクリックして追加</span>
+            <span style="font-size: 0.72rem; font-weight: 400;">地図またはカードをクリック</span>
           </div>
         </div>
       `;
@@ -342,10 +608,34 @@ function renderSimulator() {
   }
   slotsContainer.innerHTML = slotsHtml;
 
+  // 1駅抽選結果バナー描画
+  if (state.winnerId) {
+    const winSt = selectedStations.find(s => s.id === state.winnerId);
+    if (winSt) {
+      winnerContainer.innerHTML = `
+        <div class="winner-banner">
+          <div>
+            🎉 <strong>行き先決定シミュレーション結果：「${winSt.name}駅」（${winSt.line}・${winSt.pref}）</strong> に決まりました！
+            <div style="font-size: 0.78rem; font-weight: 500; opacity: 0.95; margin-top: 2px;">
+              通常往復 ${fmtYen(winSt.activeRoundTrip)} → <strong>${fmtYen(winSt.savings)} お得（${winSt.discountRate.toFixed(1)}%OFF）</strong> ／ 💡 ${winSt.tip}
+            </div>
+          </div>
+          <button type="button" class="btn-action" style="background:rgba(255,255,255,0.22); color:#fff; padding:5px 10px; font-size:0.76rem;" onclick="drawFinalWinner()">🔄 もう1回抽選</button>
+        </div>
+      `;
+    } else {
+      winnerContainer.innerHTML = "";
+    }
+  } else {
+    winnerContainer.innerHTML = "";
+  }
+
   if (selectedStations.length === 0) {
     resultContainer.innerHTML = `
-      <div style="text-align: center; color: var(--text-sub); font-size: 0.86rem; padding: 8px 0;">
-        💡 下の路線リストから<strong>実際にガチャで提示された4駅</strong>をクリックして選ぶか、右上の「<strong>🎲 ランダムに4駅ガチャを引く</strong>」を押すと、その組み合わせの<strong>期待値（平均お得額・割引率・判定ランク）</strong>を自動計算します。
+      <div style="background: var(--bg-subtle); border-radius: 12px; padding: 16px; color: var(--text-sub); font-size: 0.86rem; line-height: 1.6;">
+        💡 <strong>使い方：</strong><br>
+        1. 右上の「<strong>🎲 ランダムに4駅ガチャを引く</strong>」ボタンを押すか、<strong>右の日本地図の駅ドット</strong>・下の駅カードをクリックして4駅を選びます。<br>
+        2. 選ばれた4駅が<strong>北日本・東日本マップ（色分け新幹線路線図）</strong>上に番号付きでピン留めされ、どの地方・路線が候補になっているか一目で把握できます！
       </div>
     `;
     return;
@@ -395,7 +685,7 @@ function renderSimulator() {
     <div class="sim-result-panel">
       <div class="sim-verdict" style="background: ${verdictBg};">
         <div style="font-size: 0.75rem; opacity: 0.9;">候補${selectedStations.length}駅の総合期待値判定</div>
-        <div style="font-size: 1.08rem; margin-top: 2px;">${verdictTitle}</div>
+        <div style="font-size: 1.05rem; margin-top: 2px;">${verdictTitle}</div>
         <div style="font-size: 0.72rem; font-weight: 500; opacity: 0.92; margin-top: 3px;">${verdictSub}</div>
       </div>
       <div class="sim-metric">
@@ -421,7 +711,8 @@ function renderSimulator() {
 // 単一駅カードのHTML生成
 function renderStationCardHtml(st, rankMap) {
   const lineMeta = LINE_META[st.line];
-  const isSelected = state.selectedIds.includes(st.id);
+  const selIdx = state.selectedIds.indexOf(st.id);
+  const isSelected = selIdx >= 0;
   const fareRank = rankMap[st.id];
   const plan = PLAN_CONFIG[state.plan];
 
@@ -437,6 +728,7 @@ function renderStationCardHtml(st, rankMap) {
               <span>（お得度 ${fareRank}位/47駅）</span>
             </div>
             <div class="station-name">
+              ${isSelected ? `<span class="slot-num-badge" style="background:${lineMeta.color};">${selIdx + 1}</span>` : ""}
               ${st.name}
               ${st.seasonal ? `<span class="seasonal-badge">${st.seasonal}</span>` : ""}
             </div>
@@ -479,7 +771,7 @@ function renderStationCardHtml(st, rankMap) {
       </div>
 
       <button class="card-select-btn" onclick="event.stopPropagation(); toggleSelectStation('${st.id}')">
-        ${isSelected ? "✓ 4駅ガチャ候補に選択中（解除）" : "＋ 4駅ガチャ候補に選ぶ"}
+        ${isSelected ? `✓ 候補駅 ${selIdx + 1} に選択中（解除）` : "＋ 4駅ガチャ候補に選ぶ"}
       </button>
     </div>
   `;
@@ -535,10 +827,10 @@ function renderRankingTableView(stations, rankMap) {
   const container = document.getElementById("main-view-content");
   const plan = PLAN_CONFIG[state.plan];
 
-  // ランキングビューではデフォルトでお得度順がわかりやすいが、現在のソート順を尊重
   const rowsHtml = stations.map(st => {
     const meta = LINE_META[st.line];
-    const isSelected = state.selectedIds.includes(st.id);
+    const selIdx = state.selectedIds.indexOf(st.id);
+    const isSelected = selIdx >= 0;
     const rankNum = rankMap[st.id];
 
     return `
@@ -547,6 +839,7 @@ function renderRankingTableView(stations, rankMap) {
         <td><span class="rank-badge rank-${st.rank}">${st.rank}</span></td>
         <td>
           <div style="font-weight:800; font-size:0.98rem;">
+            ${isSelected ? `<span class="slot-num-badge" style="background:${meta.color};">${selIdx + 1}</span>` : ""}
             ${st.name}
             ${st.seasonal ? `<span class="seasonal-badge">${st.seasonal}</span>` : ""}
           </div>
@@ -568,7 +861,7 @@ function renderRankingTableView(stations, rankMap) {
         </td>
         <td>
           <button class="card-select-btn" style="padding:5px 8px; font-size:0.74rem;" onclick="event.stopPropagation(); toggleSelectStation('${st.id}')">
-            ${isSelected ? "✓ 選択中" : "＋ 候補選択"}
+            ${isSelected ? `✓ 候補${selIdx + 1}` : "＋ 候補選択"}
           </button>
         </td>
       </tr>
@@ -600,28 +893,28 @@ function renderRankingTableView(stations, rankMap) {
   `;
 }
 
-// ③ 路線図マップビューの描画
+// ③ 路線図マップビューの描画（大型日本地図＋5路線ダイアグラム）
 function renderRouteMapView(stations, rankMap) {
   const container = document.getElementById("main-view-content");
   const linesOrder = ["東北新幹線", "秋田新幹線", "山形新幹線", "上越新幹線", "北陸新幹線"];
 
-  // 路線ごとに東京から遠い順（上が北・終点、下が東京側）で並べて視覚的な路線図にする
   const colsHtml = linesOrder.map(lineName => {
     const meta = LINE_META[lineName];
     const lineStations = STATIONS
       .filter(s => s.line === lineName)
       .map(s => computeStationMetrics(s, state.plan))
-      .sort((a, b) => b.order - a.order); // 上が終点（北）、下が東京駅側
+      .sort((a, b) => b.order - a.order);
 
     const nodesHtml = lineStations.map(st => {
-      const isSelected = state.selectedIds.includes(st.id);
+      const selIdx = state.selectedIds.indexOf(st.id);
+      const isSelected = selIdx >= 0;
       const isFilteredOut = !stations.some(fs => fs.id === st.id);
       return `
         <div class="map-node ${isSelected ? "selected-in-sim" : ""}"
              style="--track-color: ${meta.color}; ${isFilteredOut ? "opacity: 0.35;" : ""}"
              onclick="toggleSelectStation('${st.id}')">
           <div class="map-node-top">
-            <span>${st.name}</span>
+            <span>${isSelected ? `<span class="slot-num-badge" style="background:${meta.color};">${selIdx + 1}</span>` : ""}${st.name}</span>
             <span class="rank-badge rank-${st.rank}" style="font-size:0.65rem; padding:2px 6px;">${st.rank}</span>
           </div>
           <div class="map-node-bottom">
@@ -656,19 +949,25 @@ function renderRouteMapView(stations, rankMap) {
     <div class="map-view-container">
       <div class="map-legend">
         <div>
-          <strong>🗺️ 東京駅発 5路線・全47駅 路線図マップ（上＝遠方・高お得度 ／ 下＝東京駅側）</strong>
+          <strong>🗾 北日本・東日本 新幹線地理マップ ＆ 5路線別ダイアグラム</strong>
           <div style="font-size:0.78rem; color:var(--text-muted); margin-top:2px;">
-            各駅ボックスをクリックすると「4駅ガチャ期待値シミュレーター」の候補に追加できます。
+            地図上の駅ドットまたは右の路線リストをクリックすると、4駅ガチャ候補として選択・比較できます。
           </div>
         </div>
-        <div style="display:flex; gap:6px; flex-wrap:wrap;">
-          <span class="rank-badge rank-SS">SS 往復3.3万円〜</span>
-          <span class="rank-badge rank-S">S 往復2.6万円〜</span>
-          <span class="rank-badge rank-A">A 往復1.8万円〜</span>
-          <span class="rank-badge rank-B">B 往復1.3万円〜</span>
-          <span class="rank-badge rank-C">C 近距離</span>
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <label style="font-size:0.8rem; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:5px;">
+            <input type="checkbox" ${state.showAllMapLabels ? "checked" : ""} onchange="state.showAllMapLabels = this.checked; renderAll();" />
+            地図上に全47駅名を表示
+          </label>
         </div>
       </div>
+
+      <div style="max-width: 680px; margin: 0 auto 28px; border: 1.5px solid var(--border-color); border-radius: 16px; overflow: hidden;">
+        <div class="geo-svg-wrap">
+          ${buildGeoMapSvg({ isLarge: true, showAllNames: state.showAllMapLabels })}
+        </div>
+      </div>
+
       <div class="map-columns">
         ${colsHtml}
       </div>
@@ -746,9 +1045,12 @@ document.addEventListener("DOMContentLoaded", () => {
     renderAll();
   });
 
-  // ガチャボタン・クリアボタン
+  // ガチャボタン・1駅抽選ボタン・クリアボタン
   document.getElementById("btn-random-gacha").addEventListener("click", drawRandomGacha);
+  document.getElementById("btn-final-draw").addEventListener("click", drawFinalWinner);
   document.getElementById("btn-clear-sim").addEventListener("click", clearSimulator);
 
-  renderAll();
+  // 初回表示時にランダム4駅ガチャを1回引いた状態で表示（すぐ地図の良さが分かるように！）
+  drawRandomGacha();
 });
+
