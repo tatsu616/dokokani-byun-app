@@ -518,6 +518,71 @@ function buildGeoMapSvg({ isLarge = false, showAllNames = false } = {}) {
   `;
 }
 
+// JR東日本 公式時刻表URL定義（timetables.jreast.co.jp）
+const TOKYO_TIMETABLE_URL = "https://timetables.jreast.co.jp/timetable/list1039.html";
+
+const STATION_TIMETABLE_CODES = {
+  // 東北新幹線（18駅）
+  nasushiobara: "1118",
+  shinshirakawa: "0869",
+  koriyama: "0675",
+  fukushima: "1352",
+  shiroishizao: "0851",
+  sendai: "0913",
+  furukawa: "1388",
+  kurikomakogen: "0632",
+  ichinoseki: "0140",
+  mizusawaesashi: "1462",
+  kitakami: "0564",
+  shinhanamaki: "0878",
+  morioka: "1565",
+  iwatenumakunai: "1193",
+  ninohe: "1185",
+  hachinohe: "1230",
+  shichinohetowada: "1725",
+  shinaomori: "0854",
+  // 秋田新幹線（5駅）
+  shizukuishi: "0782",
+  tazawako: "0955",
+  kakunodate: "0421",
+  omagari: "0346",
+  akita: "0039",
+  // 山形新幹線（10駅）
+  yonezawa: "1648",
+  takahata: "0942",
+  akayu: "0036",
+  kaminoyamaonsen: "0496",
+  yamagata: "1600",
+  tendo: "1032",
+  sakuranbohigashine: "0466",
+  murayama: "0964",
+  oishida: "0305",
+  shinjo: "0867",
+  // 上越新幹線（7駅）
+  jomokogen: "0844",
+  echigoyuzawa: "0285",
+  galayuzawa: "0408",
+  urasa: "0257",
+  nagaoka: "1085",
+  tsubamesanjo: "1018",
+  niigata: "1137",
+  // 北陸新幹線（7駅）
+  annakaharuna: "0096",
+  karuizawa: "0518",
+  sakudaira: "0736",
+  ueda: "0203",
+  nagano: "1105",
+  iiyama: "0102",
+  joetsumyoko: "1732"
+};
+
+function getStationTimetableUrl(stationId) {
+  const code = STATION_TIMETABLE_CODES[stationId];
+  return code
+    ? `https://timetables.jreast.co.jp/timetable/list${code}.html`
+    : "https://timetables.jreast.co.jp/";
+}
+
 // ヘッダー統計の更新
 function renderHeaderStats() {
   const allMetrics = STATIONS.map(s => computeStationMetrics(s, state.plan));
@@ -576,6 +641,7 @@ function renderSimulator() {
     if (st) {
       const lineColor = LINE_META[st.line].color;
       const isWinner = state.winnerId === st.id;
+      const ttUrl = getStationTimetableUrl(st.id);
       slotsHtml += `
         <div class="sim-slot filled ${isWinner ? "winner-slot" : ""}" style="border-color: ${isWinner ? "#d97706" : lineColor};">
           <button class="sim-slot-remove" onclick="toggleSelectStation('${st.id}')" title="候補から外す">✕</button>
@@ -593,6 +659,9 @@ function renderSimulator() {
           <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 2px;">
             🚄 ${st.km}km / 最速 ${fmtMins(st.mins)}
           </div>
+          <a href="${ttUrl}" target="_blank" rel="noopener noreferrer" class="slot-timetable-link" title="${st.name}駅のJR東日本時刻表を別タブで開く">
+            🕒 ${st.name}駅 JR時刻表 ↗
+          </a>
         </div>
       `;
     } else {
@@ -620,7 +689,10 @@ function renderSimulator() {
               通常往復 ${fmtYen(winSt.activeRoundTrip)} → <strong>${fmtYen(winSt.savings)} お得（${winSt.discountRate.toFixed(1)}%OFF）</strong> ／ 💡 ${winSt.tip}
             </div>
           </div>
-          <button type="button" class="btn-action" style="background:rgba(255,255,255,0.22); color:#fff; padding:5px 10px; font-size:0.76rem;" onclick="drawFinalWinner()">🔄 もう1回抽選</button>
+          <div style="display:flex; gap:6px; align-items:center;">
+            <a href="${getStationTimetableUrl(winSt.id)}" target="_blank" rel="noopener noreferrer" class="btn-action" style="background:#fff; color:#b45309; padding:5px 10px; font-size:0.76rem; text-decoration:none;">🕒 ${winSt.name}駅時刻表 ↗</a>
+            <button type="button" class="btn-action" style="background:rgba(255,255,255,0.22); color:#fff; padding:5px 10px; font-size:0.76rem;" onclick="drawFinalWinner()">🔄 もう1回抽選</button>
+          </div>
         </div>
       `;
     } else {
@@ -708,13 +780,14 @@ function renderSimulator() {
   `;
 }
 
-// 単一駅カードのHTML生成
+// 単一駅カードのHTML生成（JR駅時刻表リンクボタン付き）
 function renderStationCardHtml(st, rankMap) {
   const lineMeta = LINE_META[st.line];
   const selIdx = state.selectedIds.indexOf(st.id);
   const isSelected = selIdx >= 0;
   const fareRank = rankMap[st.id];
   const plan = PLAN_CONFIG[state.plan];
+  const timetableUrl = getStationTimetableUrl(st.id);
 
   return `
     <div class="station-card ${isSelected ? "selected-in-sim" : ""}" onclick="toggleSelectStation('${st.id}')">
@@ -770,14 +843,19 @@ function renderStationCardHtml(st, rankMap) {
         </div>
       </div>
 
-      <button class="card-select-btn" onclick="event.stopPropagation(); toggleSelectStation('${st.id}')">
-        ${isSelected ? `✓ 候補駅 ${selIdx + 1} に選択中（解除）` : "＋ 4駅ガチャ候補に選ぶ"}
-      </button>
+      <div class="card-actions-row">
+        <button type="button" class="card-select-btn" onclick="event.stopPropagation(); toggleSelectStation('${st.id}')">
+          ${isSelected ? `✓ 候補駅 ${selIdx + 1}（解除）` : "＋ 4駅候補に選ぶ"}
+        </button>
+        <a href="${timetableUrl}" target="_blank" rel="noopener noreferrer" class="timetable-btn" onclick="event.stopPropagation();" title="JR東日本「${st.name}駅」の公式時刻表を開く">
+          🕒 JR駅時刻表 ↗
+        </a>
+      </div>
     </div>
   `;
 }
 
-// ① 路線別ビューの描画
+// ① 路線別ビューの描画（各新幹線枠に東京駅の時刻表リンク付き）
 function renderByLineView(stations, rankMap) {
   const container = document.getElementById("main-view-content");
   const linesOrder = ["東北新幹線", "秋田新幹線", "山形新幹線", "上越新幹線", "北陸新幹線"];
@@ -799,8 +877,11 @@ function renderByLineView(stations, rankMap) {
             <div class="line-header-left">
               <h2 class="line-title">${lineName}（${lineStations.length}駅）</h2>
               <span class="line-train-tag">主な列車：${meta.trains}</span>
+              <a href="${TOKYO_TIMETABLE_URL}" target="_blank" rel="noopener noreferrer" class="line-tokyo-timetable-btn" title="JR東日本「東京駅」の新幹線公式時刻表を開く">
+                🕒 東京駅 時刻表（${lineName}）↗
+              </a>
             </div>
-            <div style="font-size: 0.82rem; opacity: 0.92; margin-top: 4px;">${meta.desc}</div>
+            <div style="font-size: 0.82rem; opacity: 0.92; margin-top: 6px;">${meta.desc}</div>
           </div>
           <div class="line-summary-stats">
             <span>路線平均往復：<strong>${fmtYen(avgRound)}</strong></span>
@@ -832,6 +913,7 @@ function renderRankingTableView(stations, rankMap) {
     const selIdx = state.selectedIds.indexOf(st.id);
     const isSelected = selIdx >= 0;
     const rankNum = rankMap[st.id];
+    const timetableUrl = getStationTimetableUrl(st.id);
 
     return `
       <tr class="${isSelected ? "selected-row" : ""}" onclick="toggleSelectStation('${st.id}')" style="cursor:pointer;">
@@ -860,9 +942,14 @@ function renderRankingTableView(stations, rankMap) {
           <span style="color:var(--text-muted);">最速 ${fmtMins(st.mins)}</span>
         </td>
         <td>
-          <button class="card-select-btn" style="padding:5px 8px; font-size:0.74rem;" onclick="event.stopPropagation(); toggleSelectStation('${st.id}')">
-            ${isSelected ? `✓ 候補${selIdx + 1}` : "＋ 候補選択"}
-          </button>
+          <div style="display:flex; gap:6px; align-items:center;">
+            <button type="button" class="card-select-btn" style="padding:5px 8px; font-size:0.74rem;" onclick="event.stopPropagation(); toggleSelectStation('${st.id}')">
+              ${isSelected ? `✓ 候補${selIdx + 1}` : "＋ 候補選択"}
+            </button>
+            <a href="${timetableUrl}" target="_blank" rel="noopener noreferrer" class="timetable-btn" style="padding:5px 8px; font-size:0.74rem;" onclick="event.stopPropagation();" title="${st.name}駅のJR時刻表">
+              🕒 時刻表 ↗
+            </a>
+          </div>
         </td>
       </tr>
     `;
@@ -870,6 +957,12 @@ function renderRankingTableView(stations, rankMap) {
 
   container.innerHTML = `
     <div class="ranking-table-wrap">
+      <div style="padding: 12px 16px; background: var(--bg-subtle); border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+        <span style="font-size: 0.84rem; font-weight: 700; color: var(--text-sub);">🏆 全47駅 お得度・運賃比較一覧</span>
+        <a href="${TOKYO_TIMETABLE_URL}" target="_blank" rel="noopener noreferrer" class="line-tokyo-timetable-btn" style="font-size: 0.78rem; padding: 5px 12px;">
+          🕒 出発地：東京駅 JR新幹線時刻表一覧 ↗
+        </a>
+      </div>
       <table class="ranking-table">
         <thead>
           <tr>
@@ -882,7 +975,7 @@ function renderRankingTableView(stations, rankMap) {
             <th>お得になる金額</th>
             <th>割引率 / pt単価</th>
             <th>営業キロ / 最速時間</th>
-            <th>4駅ガチャ計算</th>
+            <th>操作・時刻表</th>
           </tr>
         </thead>
         <tbody>
@@ -909,6 +1002,7 @@ function renderRouteMapView(stations, rankMap) {
       const selIdx = state.selectedIds.indexOf(st.id);
       const isSelected = selIdx >= 0;
       const isFilteredOut = !stations.some(fs => fs.id === st.id);
+      const ttUrl = getStationTimetableUrl(st.id);
       return `
         <div class="map-node ${isSelected ? "selected-in-sim" : ""}"
              style="--track-color: ${meta.color}; ${isFilteredOut ? "opacity: 0.35;" : ""}"
@@ -921,8 +1015,9 @@ function renderRouteMapView(stations, rankMap) {
             <span>往復 <strong>${fmtYen(st.activeRoundTrip)}</strong></span>
             <span style="color:#059669; font-weight:700;">${st.discountRate.toFixed(0)}%OFF</span>
           </div>
-          <div style="font-size:0.68rem; color:var(--text-muted); margin-top:2px;">
-            片道 ${fmtYen(st.activeOneWay)} / ${st.km}km
+          <div style="font-size:0.68rem; color:var(--text-muted); margin-top:3px; display:flex; justify-content:space-between; align-items:center;">
+            <span>片道 ${fmtYen(st.activeOneWay)}</span>
+            <a href="${ttUrl}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation();" style="color:var(--jr-green-dark); font-weight:700; text-decoration:none;">🕒時刻表↗</a>
           </div>
         </div>
       `;
@@ -936,7 +1031,10 @@ function renderRouteMapView(stations, rankMap) {
       <div class="map-line-col">
         <div class="map-col-header" style="background: ${meta.color};">
           ${lineName}
-          <div style="font-size:0.7rem; font-weight:500; opacity:0.9;">${branchNote}</div>
+          <div style="font-size:0.7rem; font-weight:500; opacity:0.9; margin-bottom:6px;">${branchNote}</div>
+          <a href="${TOKYO_TIMETABLE_URL}" target="_blank" rel="noopener noreferrer" class="line-tokyo-timetable-btn" style="font-size:0.72rem; padding:3px 9px;">
+            🕒 東京駅時刻表 ↗
+          </a>
         </div>
         <div class="map-track" style="--track-color: ${meta.color};">
           ${nodesHtml}
@@ -951,7 +1049,7 @@ function renderRouteMapView(stations, rankMap) {
         <div>
           <strong>🗾 北日本・東日本 新幹線地理マップ ＆ 5路線別ダイアグラム</strong>
           <div style="font-size:0.78rem; color:var(--text-muted); margin-top:2px;">
-            地図上の駅ドットまたは右の路線リストをクリックすると、4駅ガチャ候補として選択・比較できます。
+            地図上の駅ドットまたは下の路線リストをクリックすると、4駅ガチャ候補として選択・比較できます。
           </div>
         </div>
         <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
@@ -971,8 +1069,11 @@ function renderRouteMapView(stations, rankMap) {
       <div class="map-columns">
         ${colsHtml}
       </div>
-      <div class="map-origin-banner">
-        🚄 出発地：東京駅（上野駅・大宮駅も対象エリア同一）
+      <div class="map-origin-banner" style="display:flex; justify-content:center; align-items:center; gap:14px; flex-wrap:wrap;">
+        <span>🚄 出発地：東京駅（上野駅・大宮駅も対象エリア同一）</span>
+        <a href="${TOKYO_TIMETABLE_URL}" target="_blank" rel="noopener noreferrer" class="line-tokyo-timetable-btn" style="font-size:0.8rem; padding:5px 12px;">
+          🕒 東京駅 JR公式時刻表を開く ↗
+        </a>
       </div>
     </div>
   `;

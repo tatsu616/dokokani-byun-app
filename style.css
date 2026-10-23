@@ -1208,3 +1208,80 @@ body {
   gap: 8px;
   box-shadow: var(--shadow-sm);
 }
+
+/* Timetable Link Buttons */
+.card-actions-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+  margin-top: auto;
+}
+
+.card-actions-row .card-select-btn {
+  flex: 1;
+}
+
+.timetable-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 7px 11px;
+  border-radius: 7px;
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  color: #1e293b;
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.timetable-btn:hover {
+  background: #e2e8f0;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+.line-tokyo-timetable-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #ffffff;
+  color: #182232;
+  padding: 6px 13px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 800;
+  text-decoration: none;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+  white-space: nowrap;
+}
+
+.line-tokyo-timetable-btn:hover {
+  transform: translateY(-1px);
+  background: #f8fafc;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.22);
+}
+
+.slot-timetable-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 5px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--jr-green-dark);
+  text-decoration: none;
+  background: var(--bg-subtle);
+  padding: 2px 7px;
+  border-radius: 5px;
+  width: fit-content;
+}
+
+.slot-timetable-link:hover {
+  background: #dce4f0;
+  text-decoration: underline;
+}
