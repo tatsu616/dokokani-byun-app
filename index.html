@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>どこかにビューーン！東京駅発・全47駅 行き先お得度＆指定席運賃チェッカー</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- Header -->
+  <header class="app-header">
+    <div class="header-inner">
+      <div>
+        <div class="brand-badge">🚄 JR東日本 JRE POINT 新幹線ガチャ攻略ツール</div>
+        <h1 class="brand-title">どこかにビューーン！行き先お得度チェッカー</h1>
+        <p class="brand-subtitle">
+          東京駅発・対象<strong>全5路線47駅</strong>の指定席運賃（片道・往復）、割引率、1ポイント価値、4駅ガチャ期待値を一目で比較
+        </p>
+      </div>
+      <div class="header-stats" id="header-stats">
+        <!-- JSで動的に描画 -->
+      </div>
+    </div>
+  </header>
+
+  <main class="main-container">
+
+    <!-- 設定・フィルタコントロールパネル -->
+    <section class="control-panel" aria-label="表示設定と絞り込み">
+      <div class="control-grid">
+
+        <!-- 利用プラン選択 -->
+        <div class="control-group">
+          <div class="control-label">🎫 利用プラン・必要ポイント切替</div>
+          <div class="segmented-control">
+            <button type="button" class="seg-btn active" data-plan="standard">
+              通常版 6,000pt
+              <small>普通車指定席（往復）</small>
+            </button>
+            <button type="button" class="seg-btn" data-plan="jrebank">
+              JRE BANK特典 4,000pt
+              <small>2,000pt割引クーポン</small>
+            </button>
+            <button type="button" class="seg-btn" data-plan="green">
+              グリーーン！ 10,000pt
+              <small>グリーン車指定席（往復）</small>
+            </button>
+          </div>
+        </div>
+
+        <!-- 表示モード選択 -->
+        <div class="control-group">
+          <div class="control-label">📊 表示モード切替</div>
+          <div class="segmented-control">
+            <button type="button" class="seg-btn active" data-view="by-line">
+              🚄 新幹線路線別
+              <small>5路線ごとに一覧比較</small>
+            </button>
+            <button type="button" class="seg-btn" data-view="ranking">
+              🏆 全47駅ランキング表
+              <small>テーブルで一括比較</small>
+            </button>
+            <button type="button" class="seg-btn" data-view="map">
+              🗺️ 路線図マップ
+              <small>距離・位置関係で把握</small>
+            </button>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- 路線フィルタ・検索・並び替え -->
+      <div class="filter-row">
+        <div class="line-pills" role="group" aria-label="新幹線路線フィルタ">
+          <button type="button" class="line-pill active" data-line="all">すべて（47駅）</button>
+          <button type="button" class="line-pill" data-line="東北新幹線">
+            <span class="line-dot" style="background: var(--line-tohoku);"></span>東北新幹線（18）
+          </button>
+          <button type="button" class="line-pill" data-line="秋田新幹線">
+            <span class="line-dot" style="background: var(--line-akita);"></span>秋田新幹線（5）
+          </button>
+          <button type="button" class="line-pill" data-line="山形新幹線">
+            <span class="line-dot" style="background: var(--line-yamagata);"></span>山形新幹線（10）
+          </button>
+          <button type="button" class="line-pill" data-line="上越新幹線">
+            <span class="line-dot" style="background: var(--line-joetsu);"></span>上越新幹線（7）
+          </button>
+          <button type="button" class="line-pill" data-line="北陸新幹線">
+            <span class="line-dot" style="background: var(--line-hokuriku);"></span>北陸新幹線（7）
+          </button>
+        </div>
+
+        <div class="search-sort-group">
+          <span id="result-count-label" style="font-size:0.8rem; font-weight:700; color:var(--text-sub);">表示中：47 駅</span>
+          <input type="search" id="search-input" class="search-input" placeholder="🔍 駅名・県名・温泉・観光地で検索..." />
+          <select id="sort-select" class="sort-select" aria-label="並び替え">
+            <option value="route">並び順：東京駅から路線順</option>
+            <option value="fare-desc">並び順：お得度・運賃が高い順</option>
+            <option value="fare-asc">並び順：運賃が安い・近い順</option>
+            <option value="km-desc">並び順：営業キロが遠い順</option>
+            <option value="time-asc">並び順：所要時間が短い順</option>
+          </select>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4駅ガチャ期待値シミュレーター -->
+    <section class="simulator-section" id="simulator-section" aria-label="4駅ガチャ期待値シミュレーター">
+      <div class="sim-header">
+        <div class="sim-title-wrap">
+          <h2 class="sim-title">🎯 4駅ガチャ期待値シミュレーター（申し込み判定）</h2>
+          <span class="sim-badge" id="sim-count-badge">0 / 4 駅選択中</span>
+        </div>
+        <div class="sim-actions">
+          <button type="button" class="btn-action btn-gacha" id="btn-random-gacha">
+            🎲 ランダムに4駅ガチャを引く
+          </button>
+          <button type="button" class="btn-action btn-clear" id="btn-clear-sim">
+            クリア
+          </button>
+        </div>
+      </div>
+
+      <div class="sim-slots" id="sim-slots">
+        <!-- JSで4スロット描画 -->
+      </div>
+
+      <div id="sim-result-area">
+        <!-- JSで期待値・判定結果描画 -->
+      </div>
+    </section>
+
+    <!-- メイン表示エリア（路線別 / ランキング表 / 路線図マップ） -->
+    <div id="main-view-content"></div>
+
+    <!-- 補足・ルール解説 -->
+    <aside class="info-box">
+      <h3>📌 東京駅発「どこかにビューーン！」の運賃・対象駅のポイント</h3>
+      <ul>
+        <li><strong>対象となる47駅：</strong>東京駅から近すぎる「小山・宇都宮（東北新幹線）」「熊谷・本庄早稲田・高崎（上越・北陸新幹線）」は候補から除外されており、東北18駅・秋田5駅・山形10駅・上越7駅（冬季のガーラ湯沢含む）・北陸7駅（JR東日本エリアの上越妙高まで）の<strong>計47駅</strong>が抽選対象です。</li>
+        <li><strong>どの駅が当たっても必ずお得：</strong>最も近い<strong>安中榛名駅</strong>でも通常往復指定席は<strong>10,700円</strong>のため、6,000pt利用で<strong>4,700円（43.9%OFF）</strong>お得になります。最も高い<strong>秋田駅</strong>（往復<strong>36,040円</strong>）が当たれば<strong>30,040円（83.4%OFF / 1pt＝6.01円）</strong>もの価値になります。</li>
+        <li><strong>途中下車・途中乗車の裏技：</strong>決定した行き先よりも手前の停車駅で降りたり乗ったりすることが可能です（その先の区間は権利放棄となります）。例えば「いわて沼宮内」が当たった場合に手前の「盛岡」で下車したり、「くりこま高原」が当たった場合に「仙台」で下車するといった使い方も可能です。</li>
+        <li><strong>表記運賃について：</strong>おとな1名・通常期の普通車指定席（またはグリーン車指定席）の通常きっぷ運賃＋特急料金（仙台以北は「はやぶさ」、秋田新幹線は「こまち」基準）を表示しています。</li>
+      </ul>
+    </aside>
+
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
