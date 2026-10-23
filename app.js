@@ -102,8 +102,176 @@ const state = {
   sortBy: "route",  // "route", "fare-desc", "fare-asc", "km-desc", "time-asc"
   selectedIds: [],  // 最大4駅
   winnerId: null,   // 4駅から1駅抽選された決定駅ID
-  showAllMapLabels: false
+  showAllMapLabels: false,
+  // 地図の拡大縮小・パン状態（基準座標系: 640 x 820）
+  mapZoom: 1.0,
+  mapCenterX: 320,
+  mapCenterY: 410
 };
+
+// ドラッグ操作とクリック操作の判別フラグ
+let mapDragState = {
+  isDown: false,
+  hasDragged: false,
+  startX: 0,
+  startY: 0,
+  startCenterX: 320,
+  startCenterY: 410,
+  activeSvg: null
+};
+
+// 現在のズーム・中心座標からSVGのviewBox文字列を計算
+function getMapViewBox() {
+  const z = Math.max(1.0, Math.min(4.0, state.mapZoom));
+  const vw = 640 / z;
+  const vh = 820 / z;
+  const minCx = vw / 2;
+  const maxCx = 640 - vw / 2;
+  const minCy = vh / 2;
+  const maxCy = 820 - vh / 2;
+
+  state.mapCenterX = Math.max(minCx, Math.min(maxCx, state.mapCenterX));
+  state.mapCenterY = Math.max(minCy, Math.min(maxCy, state.mapCenterY));
+
+  const vx = (state.mapCenterX - vw / 2).toFixed(1);
+  const vy = (state.mapCenterY - vh / 2).toFixed(1);
+  return `${vx} ${vy} ${vw.toFixed(1)} ${vh.toFixed(1)}`;
+}
+
+// 画面内の全SVGマップのviewBoxとズーム表示を即時同期
+function syncMapViewportDom() {
+  const vb = getMapViewBox();
+  const zPct = Math.round(state.mapZoom * 100) + "%";
+  const isZoomed = state.mapZoom > 1.01;
+
+  document.querySelectorAll(".geo-svg").forEach(svg => {
+    svg.setAttribute("viewBox", vb);
+    svg.classList.toggle("is-zoomed", isZoomed);
+  });
+  document.querySelectorAll(".map-zoom-level").forEach(el => {
+    el.textContent = zPct;
+  });
+  document.querySelectorAll(".map-zoom-in-btn").forEach(btn => {
+    btn.disabled = state.mapZoom >= 4.0;
+  });
+  document.querySelectorAll(".map-zoom-out-btn").forEach(btn => {
+    btn.disabled = state.mapZoom <= 1.0;
+  });
+  document.querySelectorAll(".map-pan-hint").forEach(el => {
+    el.classList.toggle("visible", isZoomed);
+  });
+}
+
+// ＋ / ー ボタンによる拡大縮小
+function changeMapZoom(delta) {
+  const next = Math.round((state.mapZoom + delta) * 10) / 10;
+  state.mapZoom = Math.max(1.0, Math.min(4.0, next));
+  if (state.mapZoom <= 1.0) {
+    state.mapCenterX = 320;
+    state.mapCenterY = 410;
+  }
+  syncMapViewportDom();
+}
+
+// ズーム・位置リセット
+function resetMapZoom() {
+  state.mapZoom = 1.0;
+  state.mapCenterX = 320;
+  state.mapCenterY = 410;
+  syncMapViewportDom();
+}
+
+// 地図上の駅クリック（ドラッグ直後の誤クリックを防止）
+function handleMapStationClick(event, stId) {
+  if (mapDragState.hasDragged) {
+    event.stopPropagation();
+    return;
+  }
+  hideStationTooltip();
+  toggleSelectStation(stId);
+}
+
+// 駅ホバーポップアップ（ツールチップ）要素の取得・生成
+function getTooltipEl() {
+  let el = document.getElementById("map-station-tooltip");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "map-station-tooltip";
+    el.className = "map-station-tooltip";
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+// 駅にマウスカーソルが乗った時のポップアップ表示
+function showStationTooltip(event, stId) {
+  if (mapDragState.isDown) return;
+  const el = getTooltipEl();
+
+  // 出発駅・分岐駅の特別ツールチップ
+  if (stId === "tokyo" || stId === "omiya" || stId === "takasaki") {
+    const specialInfo = {
+      tokyo: { name: "東京駅", badge: "出発駅", color: "#182232", desc: "どこかにビューーン！（6,000pt）の起点駅" },
+      omiya: { name: "大宮駅", badge: "分岐・乗換", color: "#64748b", desc: "東北新幹線と上越・北陸新幹線の分岐駅" },
+      takasaki: { name: "高崎駅", badge: "分岐駅", color: "#64748b", desc: "上越新幹線と北陸新幹線の分岐駅（対象外）" }
+    }[stId];
+    el.innerHTML = `
+      <div class="tooltip-header">
+        <span class="tooltip-st-name">🚄 ${specialInfo.name}</span>
+        <span class="tooltip-line-badge" style="background:${specialInfo.color};">${specialInfo.badge}</span>
+      </div>
+      <div style="font-size:0.74rem; color:#cbd5e1;">${specialInfo.desc}</div>
+    `;
+    el.classList.add("visible");
+    moveStationTooltip(event);
+    return;
+  }
+
+  const rawSt = STATIONS.find(s => s.id === stId);
+  if (!rawSt) return;
+  const st = computeStationMetrics(rawSt, state.plan);
+  const lineColor = LINE_META[st.line].color;
+  const selIdx = state.selectedIds.indexOf(st.id);
+
+  el.innerHTML = `
+    <div class="tooltip-header">
+      <span class="tooltip-st-name">
+        ${selIdx >= 0 ? `【候補${selIdx + 1}】` : ""}${st.name}駅
+      </span>
+      <span class="tooltip-line-badge" style="background:${lineColor};">${st.line}</span>
+    </div>
+    <div class="tooltip-price-row">
+      <span style="color:#e2e8f0; font-size:0.73rem;">往復指定席</span>
+      <span style="font-weight:900; font-size:0.92rem; color:#fff;">
+        ${fmtYen(st.activeRoundTrip)}
+        <span style="color:#34d399; font-size:0.78rem; margin-left:4px;">(${st.discountRate.toFixed(1)}%OFF)</span>
+      </span>
+    </div>
+    <div class="tooltip-meta">
+      <span>📍 ${st.pref}（${st.km}km）</span>
+      <span>⏱ 最速 ${fmtMins(st.mins)}</span>
+    </div>
+  `;
+  el.classList.add("visible");
+  moveStationTooltip(event);
+}
+
+// マウス移動に伴うポップアップ位置の追従
+function moveStationTooltip(event) {
+  const el = document.getElementById("map-station-tooltip");
+  if (!el || !el.classList.contains("visible")) return;
+  const pad = 16;
+  const x = Math.max(100, Math.min(window.innerWidth - 100, event.clientX));
+  const y = Math.max(80, event.clientY);
+  el.style.left = `${x}px`;
+  el.style.top = `${y}px`;
+}
+
+// ポップアップ非表示
+function hideStationTooltip() {
+  const el = document.getElementById("map-station-tooltip");
+  if (el) el.classList.remove("visible");
+}
 
 // 新幹線路線ごとの駅IDチェイン（地理座標接続用）
 const ROUTE_CHAINS = {
@@ -336,7 +504,7 @@ function clearSimulator() {
   renderAll();
 }
 
-// 北日本・東日本（東北・甲信越・関東）SVG地理マップ＋色分け新幹線路線図を生成
+// 北日本・東日本（東北・甲信越・関東）SVG地理マップ＋色分け新幹線路線図＋拡大縮小UIを生成
 function buildGeoMapSvg({ isLarge = false, showAllNames = false } = {}) {
   const selectedStations = state.selectedIds
     .map(id => STATIONS.find(s => s.id === id))
@@ -384,7 +552,7 @@ function buildGeoMapSvg({ isLarge = false, showAllNames = false } = {}) {
     return `<path d="${pointsToSvgPath(pts)}" class="shinkansen-route-highlight" stroke="${color}" />`;
   }).join("");
 
-  // 4. 全47駅のドット＆常時表示の主要駅ラベル
+  // 4. 全47駅のドット＆ホバーポップアップ対応
   const majorLandmarks = new Set(["shinaomori", "akita", "morioka", "sendai", "shinjo", "yamagata", "niigata", "nagano", "joetsumyoko", "karuizawa"]);
   const allMetrics = STATIONS.map(s => computeStationMetrics(s, state.plan));
 
@@ -393,10 +561,9 @@ function buildGeoMapSvg({ isLarge = false, showAllNames = false } = {}) {
     if (!geo) return "";
     const color = LINE_META[st.line].color;
     const isSel = state.selectedIds.includes(st.id);
-    const r = isSel ? 6.5 : 4.2;
+    const r = isSel ? 6.5 : 4.4;
     const showName = showAllNames || (!hasSelection && majorLandmarks.has(st.id));
 
-    // 主要駅ラベルの向き調整
     let dx = 7, dy = 3, anchor = "start";
     if (["akita", "niigata", "joetsumyoko", "nagano", "shinjo", "yamagata"].includes(st.id)) {
       dx = -7;
@@ -404,11 +571,16 @@ function buildGeoMapSvg({ isLarge = false, showAllNames = false } = {}) {
     }
 
     return `
-      <g onclick="toggleSelectStation('${st.id}')" style="cursor:pointer;">
-        <title>${st.name}駅（${st.line}・${st.pref}）&#10;往復指定席：${fmtYen(st.activeRoundTrip)}（${st.discountRate.toFixed(1)}%OFF）&#10;クリックで4駅候補に追加/解除</title>
+      <g onclick="handleMapStationClick(event, '${st.id}')"
+         onmouseenter="showStationTooltip(event, '${st.id}')"
+         onmousemove="moveStationTooltip(event)"
+         onmouseleave="hideStationTooltip()"
+         style="cursor:pointer;">
+        <!-- マウスホバーしやすい透明ヒット領域 -->
+        <circle cx="${geo.x}" cy="${geo.y}" r="10" fill="transparent" />
         <circle cx="${geo.x}" cy="${geo.y}" r="${r}" fill="#ffffff" stroke="${color}" stroke-width="${isSel ? 3 : 2.2}" class="map-st-dot" />
         ${showName && !isSel ? `
-          <text x="${geo.x + dx}" y="${geo.y + dy}" text-anchor="${anchor}" font-size="10.5" font-weight="800" fill="#1e293b" stroke="#ffffff" stroke-width="3" paint-order="stroke">${st.name}</text>
+          <text x="${geo.x + dx}" y="${geo.y + dy}" text-anchor="${anchor}" font-size="10.5" font-weight="800" fill="#1e293b" stroke="#ffffff" stroke-width="3" paint-order="stroke" style="pointer-events:none;">${st.name}</text>
         ` : ""}
       </g>
     `;
@@ -419,9 +591,11 @@ function buildGeoMapSvg({ isLarge = false, showAllNames = false } = {}) {
   const omiyaGeo = STATION_GEO["omiya"];
   const takasakiGeo = STATION_GEO["takasaki"];
   const originMarker = `
-    <circle cx="${omiyaGeo.x}" cy="${omiyaGeo.y}" r="3" fill="#64748b" />
-    <circle cx="${takasakiGeo.x}" cy="${takasakiGeo.y}" r="3" fill="#64748b" />
-    <g>
+    <circle cx="${omiyaGeo.x}" cy="${omiyaGeo.y}" r="3.2" fill="#64748b"
+      onmouseenter="showStationTooltip(event, 'omiya')" onmousemove="moveStationTooltip(event)" onmouseleave="hideStationTooltip()" style="cursor:pointer;" />
+    <circle cx="${takasakiGeo.x}" cy="${takasakiGeo.y}" r="3.2" fill="#64748b"
+      onmouseenter="showStationTooltip(event, 'takasaki')" onmousemove="moveStationTooltip(event)" onmouseleave="hideStationTooltip()" style="cursor:pointer;" />
+    <g onmouseenter="showStationTooltip(event, 'tokyo')" onmousemove="moveStationTooltip(event)" onmouseleave="hideStationTooltip()" style="cursor:pointer;">
       <circle cx="${tokyoGeo.x}" cy="${tokyoGeo.y}" r="9" fill="#182232" stroke="#ffffff" stroke-width="2.5" />
       <circle cx="${tokyoGeo.x}" cy="${tokyoGeo.y}" r="3.5" fill="#facc15" />
       <rect x="${tokyoGeo.x + 11}" y="${tokyoGeo.y - 10}" width="64" height="20" rx="5" fill="#182232" />
@@ -439,14 +613,12 @@ function buildGeoMapSvg({ isLarge = false, showAllNames = false } = {}) {
     const badgeColor = isWinner ? "#d97706" : color;
     const numStr = idx + 1;
 
-    // 吹き出しを左右どちらに出すか（日本海側・内陸西側は左、太平洋側・東北本線側は右）
     const placeLeft = ["秋田新幹線", "上越新幹線", "北陸新幹線", "山形新幹線"].includes(st.line) && geo.x < 330;
     const boxW = isWinner ? 158 : 144;
     const boxH = 38;
     let bx = placeLeft ? Math.max(8, geo.x - boxW - 18) : Math.min(640 - boxW - 8, geo.x + 18);
     let by = Math.max(12, Math.min(820 - boxH - 12, geo.y - boxH / 2));
 
-    // 既存の吹き出しとの上下重なりを回避
     for (let iter = 0; iter < 8; iter++) {
       let collided = false;
       for (const prev of calloutBoxes) {
@@ -466,7 +638,11 @@ function buildGeoMapSvg({ isLarge = false, showAllNames = false } = {}) {
     const anchorY = by + boxH / 2;
 
     return `
-      <g onclick="toggleSelectStation('${st.id}')" style="cursor:pointer;">
+      <g onclick="handleMapStationClick(event, '${st.id}')"
+         onmouseenter="showStationTooltip(event, '${st.id}')"
+         onmousemove="moveStationTooltip(event)"
+         onmouseleave="hideStationTooltip()"
+         style="cursor:pointer;">
         <!-- パルスリング -->
         <circle cx="${geo.x}" cy="${geo.y}" r="${isWinner ? 15 : 12}" stroke="${badgeColor}" class="pulse-ring" />
         <!-- 引き出し線 -->
@@ -487,9 +663,19 @@ function buildGeoMapSvg({ isLarge = false, showAllNames = false } = {}) {
     `;
   }).join("");
 
-  // 海・方位・タイトル装飾
+  const vb = getMapViewBox();
+  const zPct = Math.round(state.mapZoom * 100) + "%";
+  const isZoomed = state.mapZoom > 1.01;
+
   return `
-    <svg viewBox="0 0 640 820" class="geo-svg ${isLarge ? "large-map" : ""}" role="img" aria-label="北日本・東日本 新幹線路線図と行き先候補マップ">
+    <div class="map-zoom-controls" aria-label="地図の拡大縮小コントロール">
+      <button type="button" class="map-zoom-btn map-zoom-in-btn" onclick="changeMapZoom(0.5)" title="地図を拡大（＋）" ${state.mapZoom >= 4.0 ? "disabled" : ""}>＋</button>
+      <div class="map-zoom-level">${zPct}</div>
+      <button type="button" class="map-zoom-btn map-zoom-out-btn" onclick="changeMapZoom(-0.5)" title="地図を縮小（ー）" ${state.mapZoom <= 1.0 ? "disabled" : ""}>ー</button>
+      <button type="button" class="map-zoom-btn map-zoom-reset" onclick="resetMapZoom()" title="標準サイズ（100%）に戻す">100%</button>
+    </div>
+    <div class="map-pan-hint ${isZoomed ? "visible" : ""}">✋ ドラッグで地図を移動できます</div>
+    <svg viewBox="${vb}" class="geo-svg ${isLarge ? "large-map" : ""} ${isZoomed ? "is-zoomed" : ""}" role="img" aria-label="北日本・東日本 新幹線路線図と行き先候補マップ">
       <!-- 海域ラベル -->
       <text x="105" y="290" font-size="13" font-weight="800" fill="#93c5fd" letter-spacing="0.2em">日本海</text>
       <text x="545" y="520" font-size="13" font-weight="800" fill="#93c5fd" letter-spacing="0.2em">太平洋</text>
@@ -1150,6 +1336,50 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("btn-random-gacha").addEventListener("click", drawRandomGacha);
   document.getElementById("btn-final-draw").addEventListener("click", drawFinalWinner);
   document.getElementById("btn-clear-sim").addEventListener("click", clearSimulator);
+
+  // 地図拡大時のドラッグ移動（パン操作）
+  document.addEventListener("mousedown", (e) => {
+    const svg = e.target.closest(".geo-svg");
+    if (!svg || state.mapZoom <= 1.01) return;
+    mapDragState.isDown = true;
+    mapDragState.hasDragged = false;
+    mapDragState.startX = e.clientX;
+    mapDragState.startY = e.clientY;
+    mapDragState.startCenterX = state.mapCenterX;
+    mapDragState.startCenterY = state.mapCenterY;
+    mapDragState.activeSvg = svg;
+    svg.classList.add("is-panning");
+  });
+
+  document.addEventListener("mousemove", (e) => {
+    if (!mapDragState.isDown || !mapDragState.activeSvg) return;
+    const dx = e.clientX - mapDragState.startX;
+    const dy = e.clientY - mapDragState.startY;
+    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) {
+      mapDragState.hasDragged = true;
+      hideStationTooltip();
+    }
+    const rect = mapDragState.activeSvg.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      const vw = 640 / state.mapZoom;
+      const vh = 820 / state.mapZoom;
+      state.mapCenterX = mapDragState.startCenterX - dx * (vw / rect.width);
+      state.mapCenterY = mapDragState.startCenterY - dy * (vh / rect.height);
+      syncMapViewportDom();
+    }
+  });
+
+  document.addEventListener("mouseup", () => {
+    if (!mapDragState.isDown) return;
+    mapDragState.isDown = false;
+    if (mapDragState.activeSvg) {
+      mapDragState.activeSvg.classList.remove("is-panning");
+      mapDragState.activeSvg = null;
+    }
+    setTimeout(() => {
+      mapDragState.hasDragged = false;
+    }, 30);
+  });
 
   // 初回表示時にランダム4駅ガチャを1回引いた状態で表示（すぐ地図の良さが分かるように！）
   drawRandomGacha();
