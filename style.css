@@ -1461,3 +1461,42 @@ body {
   justify-content: space-between;
   gap: 8px;
 }
+
+/* Footer */
+.app-footer {
+  margin-top: 36px;
+  border-top: 1px solid var(--border);
+  background: #f1f5f9;
+  padding: 22px 20px 30px;
+  color: var(--text-sub);
+  font-size: 0.78rem;
+  line-height: 1.65;
+}
+
+.footer-inner {
+  max-width: 1280px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.footer-disclaimer {
+  font-weight: 700;
+  color: var(--text-main);
+  margin: 0 0 6px;
+}
+
+.footer-note {
+  margin: 0;
+  color: var(--text-sub);
+}
+
+.footer-note a {
+  color: var(--brand-dark);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.footer-note a:hover {
+  color: var(--brand-green);
+}

@@ -526,6 +526,7 @@ function buildGeoMapSvg({ isLarge = false, showAllNames = false } = {}) {
   }).join("");
 
   const prefsLabels = JAPAN_MAP_PREFS.map(p => {
+    if (p.lx == null || p.ly == null) return "";
     const shortName = p.name.replace(/[都県]$/, "");
     return `<text x="${p.lx}" y="${p.ly}" class="pref-label ${p.isTarget ? "target-label" : ""}">${shortName}</text>`;
   }).join("");
